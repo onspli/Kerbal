@@ -1,13 +1,3 @@
-// vertical acceleration (pointing up)
-function ship_vacc {
-  parameter delta_t.
-
-  local t0 is time:seconds.
-  local vel0 is ship:verticalspeed.
-  wait delta_t.
-  local acc is (ship:verticalspeed - vel0) / (time:seconds - t0).
-  return acc.
-}
 
 function value_sgn {
   parameter value.
@@ -23,21 +13,6 @@ function value_limit {
   if val < min return min.
   if val > max return max.
   return val.
-}
-
-function hover_target_acc {
-  parameter delta_alt.
-  parameter delta_t.
-
-  local vel is ship:verticalspeed.
-  local target_vel is value_sgn(delta_alt) * value_limit(abs(delta_alt), 0.05, 10).
-  local target_acc is (target_vel - vel) / delta_t.
-  hover_log("vel: " + vel).
-  hover_log("target vel: " + target_vel).
-  hover_log("target acc: " + target_acc).
-  hover_log("delta_t: " + delta_t).
-
-  return target_acc.
 }
 
 function hover_log {
@@ -57,8 +32,13 @@ function moving_avarage_update {
   vlist:remove(0).
   vlist:add(value).
 
+  local i is 0.
   local res is 0.
-  for val in vlist set res to res + val.
+  until i >= vlist:length {
+    if i = 0 set res to vlist[i].
+    else set res to res + vlist[i].
+    set i to i + 1.
+  }
   set res to res / vlist:length.
 
   vlist:add(res).
@@ -70,62 +50,81 @@ function moving_avarage {
   return vlist[vlist:length - 1].
 }
 
-global hover_koef is list(0.1, 0.1, 0.1).
-global hover_const is list(0, 0, 0).
-global hover_gacc is list(0, 0).
-global hover_delta_t is list(0.1, 0.1).
-global hover_t is 0.
-function hover {
-  parameter delta_alt.
+function surface_vec {
+  parameter vec.
+  local west is vcrs(north:vector, up:vector).
+  return V(vec * up:vector, vec * north:vector, vec * west).
+}
 
-  // we cannot ever cut off throttle, because thrust is used for computing gforce
-  local throt_min is 0.01.
+function orig_vector {
+  parameter vec.
+  return up * V(vec:z, vec:y, vec:x).
+}
+
+// time of last hoverloop
+global hover_t is 0.
+// last velocity.
+global hover_vel is V(0,0,0).
+// last facing
+global hover_facing is V(1,0,0).
+
+function hover {
+  parameter target_vel is V(0,0,0).
 
   hover_log("-- hover loop --").
 
-  local acc is ship_vacc(0.1).
-  local throt is value_limit(throttle, 0, 1).
-  local ship_acc is throt * (ship:availablethrust / ship:mass) * vdot(up:vector, ship:facing:vector).
-
-  hover_log("acc: " + acc).
-  hover_log("throt: " + throt).
-  hover_log("ship acc: " + ship_acc).
-
-  if throt >= throt_min {
-    set hover_gacc to moving_avarage_update(acc - ship_acc, hover_gacc).
-  }
-  local gacc is moving_avarage(hover_gacc).
-  hover_log("gacc: " + gacc).
-
-
-  if throt >= throt_min and abs(acc - gacc) > 0 {
-    set hover_koef to moving_avarage_update(throt / (acc - gacc), hover_koef).
-    set hover_const to moving_avarage_update(- moving_avarage(hover_koef) * gacc, hover_const).
-  }
-  local koef is moving_avarage(hover_koef).
-  local const is moving_avarage(hover_const).
-
-  hover_log("koef: " + koef).
-  hover_log("const: " + const).
-
   local delta_t is time:seconds - hover_t.
   set hover_t to time:seconds.
-  local target_acc is 0.
-  if delta_t < 1 {
-    set hover_delta_t to moving_avarage_update(delta_t, hover_delta_t).
-    set target_acc to hover_target_acc(delta_alt, moving_avarage(hover_delta_t)).
-  }
 
-  set throt to value_limit(koef * target_acc + const, throt_min, 1).
-  hover_log("throt: " + throt).
-  hover_log("predicted acc: " + ((throt - const) / koef)).
+  local vel is surface_vec(ship:velocity:surface).
+  local acc is (vel - hover_vel) / delta_t.
+  set hover_vel to vel.
+  local target_acc is (target_vel - vel) / delta_t.
+
+  local throt is value_limit(throttle, 0, 1).
+  local max_acc is (ship:availablethrust / ship:mass).
+
+  hover_log("delta_t: " + delta_t).
+  //  hover_log("acc: " + acc:mag + ", " + acc).
+  //  hover_log("throt: " + throt).
+  //  hover_log("max acc: " + max_acc).
+
+  local facing is surface_vec(ship:facing:vector):normalized.
+  local sacc is throt * max_acc * (facing + hover_facing):normalized.
+  local gacc is acc - sacc.
+  local target_sacc is target_acc - gacc.
+
+  set hover_facing to surface_vec(ship:facing:vector):normalized.
+  if max_acc > 0 {
+    set throt to value_limit(target_sacc * hover_facing / max_acc, 0.1, 1).
+  }
   lock throttle to throt.
+  set ship:control:pilotmainthrottle to throt.
+
+  local steer is target_sacc:normalized.
+  // keep the pointy end of vessel up
+  local min_steer_x is 0.5.
+  if steer:x < min_steer_x set steer:x to min_steer_x.
+
+  hover_log("gacc: " + gacc:mag + ", " + gacc).
+  //  hover_log("facing: " + facing).
+  //  hover_log("ship acc: "+ sacc:mag + ", "  + sacc).
+  //  hover_log("target ship acc: " + target_sacc).
+  //  hover_log("throt: " + throt).
+  //  hover_log("steer: " + steer).
+
+  set hover_acc_draw to vecdraw(V(0,0,0), orig_vector(target_sacc), green, "", 1, true).
+  set hover_steer_draw to vecdraw(V(0,0,0), orig_vector(steer)*5, blue, "", 1, true).
+  lock steering to orig_vector(steer).
+  wait 0.05.
 }
 
 function hover_land {
   print "Landing".
   legs on.
   hover_alt(0, 0).
+  unlock throttle.
+  set ship:control:pilotmainthrottle to 0.
   print "Landed".
 }
 
@@ -146,5 +145,6 @@ function hover_alt {
   until time:seconds - t0 > dur {
     hover(alt - ship_bounds:bottomaltradar).
   }
+  unlock throttle.
   print "Hovering finished".
 }
