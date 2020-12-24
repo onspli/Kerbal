@@ -1,7 +1,6 @@
 parameter launch_alt is 1000.
-run hover.
-
-deletepath(land.log).
+//deletepath(land.log).
+RUN ONCE lib.
 
 // Altitude after burn with constant acceleration, when velocity reaches target_vel.
 // Ship is burning retrograde, the retrograde vector is changing, the thrust is not constant and
@@ -14,32 +13,36 @@ function alt_after_burn {
   parameter alt.
   parameter target_vel is 0.
   parameter throt is 1.
-  log "alt: " + alt + ", target_vel: " + target_vel + ", thro: " + throt to land.log.
+  //log "alt: " + alt + ", target_vel: " + target_vel + ", thro: " + throt to land.log.
+
+  // panic - no fuel
+  if ship:availablethrust = 0 return -100.
 
   // first burn in current diraction, until we kill horizontal velocity.
   local vel1 is ship:velocity:surface.
   local vel1srfc is surface_vec(vel1).
-  local vacc1 is throt * (ship:availablethrust / ship:mass) * ship:facing:vector * up:vector - grav_acc():mag.
-  if vacc1 < 0 return alt.
-  local hacc1 is throt * (ship:availablethrust / ship:mass) * vectorexclude(up:vector, ship:facing:vector):mag.
-  local dur1 is vectorexclude(up:vector, vel1):mag / hacc1.
-  local alt1 is alt + vel1 * up:vector * dur1 + vacc1 * dur1 ^ 2 * 0.5.
-  log "alt1: " + alt1 + ", vacc1: " + vacc1 + ", hacc1: " + hacc1 + ", vel1: " + vel1srfc + ", dur1: " + dur1 to land.log.
+  if vel1srfc:x > 0 return alt. // heading up
+  local vacc1koef is ship:facing:vector * up:vector.
+  if vacc1koef < 0 return alt. // facing down
 
+  local vacc1 is throt * (ship:availablethrust / ship:mass) * vacc1koef - grav_acc():mag.
+  local hacc1 is throt * (ship:availablethrust / ship:mass) * vectorexclude(up:vector, ship:facing:vector).
+  local dur1 is vectorexclude(up:vector, vel1):mag / hacc1:mag.
+  local alt1 is alt + vel1 * up:vector * dur1 + vacc1 * dur1 ^ 2 * 0.5.
+  //log "alt1: " + alt1 + ", vacc1: " + vacc1 + ", hacc1: " + hacc1:mag + ", vel1: " + vel1srfc + ", dur1: " + dur1 to land.log.
 
   // second burn with ship facing up
   local vel2 is vel1 * up:vector + dur1 * vacc1.
   local vacc2 is throt * (ship:availablethrust / ship:mass) - grav_acc():mag.
   local dur2 is -(vel2 - target_vel) / vacc2.
   local alt2 is alt1 + vel2 * dur2 + vacc2 * dur2 ^ 2 * 0.5.
-  log "alt2: " + alt2 + ", vacc2: " + vacc2 + ", vel2: " + vel2 + ", dur2: " + dur2 to land.log.
+  //log "alt2: " + alt2 + ", vacc2: " + vacc2 + ", vel2: " + vel2 + ", dur2: " + dur2 to land.log.
 
-  // panic
+  // panic - we dont have enough thrust to fight the gravity.
   if vacc2 < 0 return -100.
-  // heading up
-  if vel1srfc:x > 0 return alt.
 
-  print "Expected altitude: " + alt2.
+  print "Est ALT: " + alt2 + "m".
+  impact_lng().
   return alt2.
 }
 
@@ -52,21 +55,11 @@ function alter_throttle {
   local sacc is ship:facing:vector * up:vector * ship:availablethrust / ship:mass.
   local gacc is grav_acc():mag.
   local delta_vel is vel + target_vel.
-  // time to panic
-  if sacc <= 0 return 0.
-  if target_alt - alt >= 0 return 0.
+  // panic - we dont have enough thrust to fight the gravity.
+  if sacc = 0 or sacc <= gacc return 1.
+  // we reached target altitude
+  if alt - target_alt <= 0 return 0.
   return gacc / sacc + (delta_vel - 2 * vel) * delta_vel / (2 * sacc * (target_alt - alt)).
-}
-
-function launch {
-  parameter alt.
-  lock throttle to 1.0.
-  //lock steering to up:vector.
-  stage.
-
-  wait until ship:orbit:apoapsis > alt.
-  unlock throttle.
-  unlock steering.
 }
 
 function landing_burn {
@@ -90,7 +83,7 @@ function landing_burn {
     }
     wait 0.1.
   }
-  log "Landing burn started" to land.log.
+  //log "Landing burn started" to land.log.
   print "Landing burn started".
   lock throttle to 1.0.
 
@@ -108,7 +101,5 @@ function landing_burn {
   unlock steering.
   print "Landing burn completed".
 }
-
-launch(launch_alt).
 
 landing_burn(20).
