@@ -48,6 +48,7 @@ FUNCTION impact_time {
   LOCAL g IS grav_acc():MAG.
   LOCAL t IS (v + SQRT(v^2 + 2 * g * h)) / g.
   PRINT "Est time to impact: " + ROUND(t) + "s".
+  LOG "Alt: " + h + "m" TO impact.log.
   LOG "Est time to impact: " + ROUND(t) + "s" TO impact.log.
   RETURN t.
 }
@@ -73,7 +74,14 @@ FUNCTION impact_lng {
   // compute angle between periapsis and impact
   LOCAL ang IS VANG(V(-1,0,0), imp).
   IF imp:Y > 0 SET ang TO -ang.
-  SET ang TO ang + SHIP:ORBIT:LAN + SHIP:ORBIT:ARGUMENTOFPERIAPSIS - BODY:ROTATIONANGLE.
+
+  // argument of peripasis is measured in the direction of the motion
+  SET ang TO ang + SHIP:ORBIT:LAN - BODY:ROTATIONANGLE.
+  IF SHIP:ORBIT:INCLINATION >= 90 SET ang TO ang - SHIP:ORBIT:ARGUMENTOFPERIAPSIS.
+  ELSE SET ang TO ang + SHIP:ORBIT:ARGUMENTOFPERIAPSIS.
+
+  SET ang TO value_mod(ang, 360).
+  LOG "Est impact ang: " + ROUND(ang, 2) TO impact.log.  
 
   // corect with body rotation estimate
   LOCAL rot IS impact_time() / BODY:ROTATIONPERIOD.
@@ -82,8 +90,21 @@ FUNCTION impact_lng {
   SET ang TO value_mod(ang, 360).
   PRINT "Est impact LNG: " + ROUND(ang, 2).
   PRINT "Ship LNG: " + ROUND(value_mod(ship:geoposition:lng, 360), 2).
-
   LOG "Est impact LNG: " + ROUND(ang, 2) TO impact.log.
   LOG "Ship LNG: " + ROUND(value_mod(ship:geoposition:lng, 360), 2) TO impact.log.
+
   RETURN ang.
+}
+
+FUNCTION airbrakes_extended {
+	parameter value is false. // default is off
+
+	local ab is ship:partsnamed("airbrake1").
+	for p in ab {
+		local m is p:getmodule("moduleaerosurface").
+		m:setfield("pitch", value).
+		m:setfield("yaw", value).
+    if value m:doaction("extend", true).
+    else m:doaction("retract", true).
+	}
 }
