@@ -1,4 +1,4 @@
-parameter launch_alt is 1000.
+PARAMETER target_lng IS -1.
 //deletepath(land.log).
 RUN ONCE lib.
 
@@ -9,21 +9,22 @@ RUN ONCE lib.
 // then we burn in up direction. It is acutally less efficient than burning retrograde all he time,
 // so it should give lower bound on the final altitude after burn, and that is exactly what we want.
 // Also the drag can only help us.
-function alt_after_burn {
+function pos_after_burn {
   parameter alt.
   parameter target_vel is 0.
   parameter throt is 1.
   //log "alt: " + alt + ", target_vel: " + target_vel + ", thro: " + throt to land.log.
 
+  local ilng is impact_lng().
   // panic - no fuel
-  if ship:availablethrust = 0 return -100.
+  if ship:availablethrust = 0 return V(-100, ilng, 0).
 
   // first burn in current diraction, until we kill horizontal velocity.
   local vel1 is ship:velocity:surface.
   local vel1srfc is surface_vec(vel1).
-  if vel1srfc:x > 0 return alt. // heading up
+  if vel1srfc:x > 0 return V(alt, ilng, 0). // heading up
   local vacc1koef is ship:facing:vector * up:vector.
-  if vacc1koef < 0 return alt. // facing down
+  if vacc1koef < 0 return V(alt, ilng, 0). // facing down
 
   local vacc1 is throt * (ship:availablethrust / ship:mass) * vacc1koef - grav_acc():mag.
   local hacc1 is throt * (ship:availablethrust / ship:mass) * vectorexclude(up:vector, ship:facing:vector).
@@ -39,11 +40,10 @@ function alt_after_burn {
   //log "alt2: " + alt2 + ", vacc2: " + vacc2 + ", vel2: " + vel2 + ", dur2: " + dur2 to land.log.
 
   // panic - we dont have enough thrust to fight the gravity.
-  if vacc2 < 0 return -100.
+  if vacc2 < 0 return V(-100, ilng, 0).
 
   print "Est ALT: " + alt2 + "m".
-  impact_lng().
-  return alt2.
+  return V(alt2, ilng, 0).
 }
 
 function alter_throttle {
@@ -70,12 +70,14 @@ function landing_burn {
   // wait until the ship is falling down
   wait until ship:verticalspeed < -5.
   lock steering to ship:srfretrograde:vector.
+  airbrakes_extended(true).
 
   // wait for landing burn ignition
   local ship_bounds is ship:bounds.
-  local prev_alt is alt_after_burn(ship_bounds:bottomaltradar, target_vel).
+  local prev_alt is ship_bounds:bottomaltradar.
   until false {
-    local alt is alt_after_burn(ship_bounds:bottomaltradar, target_vel).
+    local pos is pos_after_burn(ship_bounds:bottomaltradar, target_vel).
+    local alt is pos:x.
     local delta_alt is alt - prev_alt.
     set prev_alt to alt.
     if alt + delta_alt < target_alt {
@@ -84,12 +86,13 @@ function landing_burn {
     wait 0.1.
   }
   //log "Landing burn started" to land.log.
+  lock steering to ship:srfretrograde:vector.
   print "Landing burn started".
   lock throttle to 1.0.
 
   // finetune throttle to final altitude
   until ship_bounds:bottomaltradar < final_alt {
-    alt_after_burn(ship_bounds:bottomaltradar, target_vel, throttle).
+    pos_after_burn(ship_bounds:bottomaltradar, target_vel, throttle).
     lock throttle to value_limit(alter_throttle(ship_bounds:bottomaltradar, final_alt, target_vel), 0, 1).
     if ship:verticalspeed > target_vel lock steering to up:vector.
     wait 0.1.
@@ -99,6 +102,7 @@ function landing_burn {
   set ship:control:pilotmainthrottle to 0.
   unlock throttle.
   unlock steering.
+  airbrakes_extended(false).
   print "Landing burn completed".
 }
 
